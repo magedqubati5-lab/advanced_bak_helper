@@ -39,7 +39,12 @@ class MainApplication(ctk.CTk):
             on_trigger_manual=self.trigger_manual_processing,
             on_exit_app=self.quit_app
         )
-        self.tray.run_in_thread()
+        
+        initial_running = bool(start_in_tray or self.config.get("auto_schedule_enabled", False))
+        self.tray.run_in_thread(initial_running=initial_running)
+
+        # Hook scheduler status updates to dynamically change tray icon (Green/Red) and tooltip
+        self.scheduler.on_status_change = self._on_scheduler_status_change
 
         self.protocol("WM_DELETE_WINDOW", self.on_close_window)
 
@@ -50,13 +55,19 @@ class MainApplication(ctk.CTk):
         self._build_sidebar()
         self._build_container()
 
-        # Show Processing View by default
-        self.select_tab("processing")
+        # Auto-start scheduler if configured in settings or if started in tray mode
+        if initial_running:
+            self.scheduler.start()
 
         if start_in_tray:
             self.withdraw()
-            self.scheduler.start()
-            self.view_processing.refresh_stats()
+
+        # Show Processing View by default and refresh stats
+        self.select_tab("processing")
+        self.view_processing.refresh_stats()
+
+    def _on_scheduler_status_change(self, is_running: bool):
+        self.tray.update_status(is_running)
 
     def _build_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color="#1E1E2E")

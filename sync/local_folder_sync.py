@@ -28,8 +28,8 @@ class LocalFolderSyncProvider(CloudSyncProvider):
         if not os.path.exists(local_path):
             return False
         try:
-            os.makedirs(self.target_folder_path, exist_ok=True)
             dest_path = os.path.join(self.target_folder_path, remote_name)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             shutil.copy2(local_path, dest_path)
             return True
         except Exception as e:
@@ -52,7 +52,13 @@ class LocalFolderSyncProvider(CloudSyncProvider):
         if not self.target_folder_path or not os.path.exists(self.target_folder_path):
             return []
         try:
-            return [f for f in os.listdir(self.target_folder_path) if os.path.isfile(os.path.join(self.target_folder_path, f))]
+            rel_files = []
+            for root, dirs, files in os.walk(self.target_folder_path):
+                for f in files:
+                    full_p = os.path.join(root, f)
+                    rel_p = os.path.relpath(full_p, self.target_folder_path).replace('\\', '/')
+                    rel_files.append(rel_p)
+            return rel_files
         except Exception as e:
             print(f"[LocalFolderSyncProvider] list error: {e}")
             return []

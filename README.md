@@ -2,7 +2,7 @@
 
 A high-performance, compressed differential backup management system powered by **HDiffPatch** (`hdiffz` and `hpatchz`). Engineered specifically for binary backup files such as Microsoft SQL Server (`.bak`) dumps that exhibit high structural similarity across successive cycles.
 
-Features a modern **CustomTkinter** dark-mode GUI, Windows System Tray integration, AES-256 encryption with RSA-2048 dual-key signing for cloud synchronization (Google Drive Desktop / Synced Folders, FTP, and Google Drive API), a full **CLI interface**, and on-the-fly slim reference chaining.
+Features a modern **CustomTkinter** dark-mode GUI, Windows System Tray integration with dynamic status icons, AES-256 encryption with RSA-2048 dual-key signing for cloud synchronization (Google Drive Desktop / Synced Folders, FTP, and Google Drive API), a full **CLI interface**, and on-the-fly slim reference chaining.
 
 ---
 
@@ -31,16 +31,16 @@ You can obtain precompiled official release binaries directly from the **[HDiffP
 ## 🌟 Key Features
 
 - **Extreme Compression via HDiffPatch**: Uses binary differential deltas (`hdiffz -c-zstd`) to produce ultra-compact `.hdiff` backup files (often reducing multi-gigabyte daily backups by 90%+).
-- **Slim Reference Chaining (`.ref/`)**:
+- **Slim Reference Chaining (`.ref/`) & Depth Limiting**:
   - The initial reference baseline is compressed as `[HASH]-ref001.zip`.
-  - Subsequent references (`ref002`, `ref003`, etc.) are stored exclusively as slim delta patches (`[HASH]-ref001-ref002.hdiff`).
-  - No large uncompressed files are kept permanently in `.ref/`. References are materialized on the fly during patching and restoration.
+  - Subsequent references (`ref002`, `ref003`, etc.) are stored as slim delta patches (`[HASH]-ref001-ref002.hdiff`).
+  - **Reference Chain Depth Limiting**: `max_chain_length` caps the maximum hop distance from baseline to any reference.
+  - **Configurable Chain Reset Strategies**:
+    1. **Direct Root Delta (Default)**: When max depth is reached (e.g., at `ref010`), `ref011` is derived directly from root `ref001` (`ref001-ref011.hdiff`), resetting depth to 1.
+    2. **Standalone Base ZIP Option**: Optionally create a new standalone baseline ZIP archive (e.g., `ref011.zip`), starting a completely independent reference branch.
 - **Differential File Output Naming**:
   - Processed `.hdiff` files are placed directly in the `output` directory:
     `[original_name].[MD5].[active_ref].hdiff` (e.g. `AdventureWorks.bak.a1b2c3d4e5f6...ref001.hdiff`).
-- **Dynamic Reference Promotion Thresholds**:
-  - Automatically promotes to a new reference when the latest differential patch exceeds the **Max File Size Limit** (MB) or when the chain reaches the **Max Chain Length** (e.g., 10 deltas).
-  - The size threshold applies strictly to processed differential files, never to baseline `.ref/` archives.
 - **Interactive Restore Center with 100% MD5 Verification**:
   - Searchable, sortable table of all restorable backups.
   - Automatically reconstructs any target backup through its reference chain using `hpatchz`.
@@ -48,16 +48,16 @@ You can obtain precompiled official release binaries directly from the **[HDiffP
 - **AES-256 Encryption & RSA-2048 Digital Signing**:
   - Pre-upload encryption using AES-256 (Fernet with PBKDF2 key derivation).
   - Dual-key asymmetric signing using RSA-2048 (PSS with SHA-256).
-  - Tamper detection on download: alerts user upon digital signature mismatch with option to proceed with valid password.
+  - Full synchronization of both `output/` backups and `.ref/` chain archives.
 - **Zero-Setup Cloud Synchronization**:
-  - **GDrive Desktop / Synced Folders (Easiest)**: Zero API setup. Point directly to `G:\My Drive\Backups`, OneDrive, Dropbox, or a network share. Files are automatically encrypted & signed locally and synced to the cloud.
+  - **GDrive Desktop / Synced Folders (Easiest)**: Zero API setup. Point directly to `G:\My Drive\Backups`, OneDrive, Dropbox, or a network share.
   - **FTP / FTPS Server**: Direct file transfer to standard FTP servers.
   - **Google Drive API**: Headless authentication using Service Account JSON keys.
-- **Modern GUI & Background System Tray**:
-  - CustomTkinter dark theme interface.
-  - Runs minimized in the system tray beside the system clock with autostart support.
-- **Full-Featured CLI**:
-  - Complete command-line interface for automation, server scripts, and CI/CD pipelines.
+- **Background System Tray & Status Indicators**:
+  - **Double-click** the tray icon to restore the main window.
+  - **Dynamic Status Colors**: 🟢 Green badge when periodic daemon is running; 🔴 Red badge when stopped.
+  - **Hover Tooltips**: Live scheduler status displayed on mouse hover.
+  - Silent background execution (`subprocess.CREATE_NO_WINDOW`) with zero CMD window flashes.
 
 ---
 
@@ -107,7 +107,7 @@ python main.py
    - "Scan Directories" button to check folders.
    - "Start Differential Backup" button with real-time progress bar.
    - "Stop Processing" button to cancel running operations gracefully at any time.
-   - "Enable/Stop Periodic Daemon" toggle.
+   - "Enable/Stop Periodic Daemon" toggle with live button state synchronization.
 2. **🔄 Restore**:
    - Searchable and sortable table of all available backups.
    - Filter by name, ref tag, or MD5 hash.
@@ -117,12 +117,13 @@ python main.py
 3. **☁️ Cloud Sync**:
    - Select provider (GDrive Desktop Synced Folder, FTP, or Google Drive API).
    - Test remote connection / sync folder.
-   - Encrypt, sign, and upload output backups.
-   - Download, verify signature, and decrypt backups.
+   - Encrypt, sign, and upload output backups (including `.ref/` and manifest).
+   - Download, verify signatures, and decrypt backups.
 4. **⚙️ Settings**:
    - Configure input and output paths.
-   - Set max differential patch size (MB) and max chain length.
-   - Configure scheduler interval (minutes).
+   - Set max differential patch size (MB) and max chain depth limit.
+   - Toggle Standalone Base ZIP reset strategy.
+   - Configure scheduler interval (minutes) and auto-start switch.
    - Set encryption password and cloud credentials.
 
 ---
@@ -155,11 +156,11 @@ python cli.py restore --file "output_backups/MyDB.bak.a1b2c3d4...ref001.hdiff" -
 
 ### 5. Cloud Synchronization
 ```bash
-# Upload and encrypt output files
+# Upload and encrypt output files and .ref/ directory
 python cli.py sync upload
 
-# Download and verify remote file
-python cli.py sync download --file "MyDB.bak.enc" --dest "C:/restored"
+# Download and verify remote files
+python cli.py sync download
 ```
 
 ### 6. Run Scheduler Daemon in Console
@@ -173,7 +174,7 @@ python cli.py daemon --interval 30
 python cli.py config --show
 
 # Set configuration keys
-python cli.py config --set input_dir="C:/sql_backups" output_dir="C:/compressed_out"
+python cli.py config --set input_dir="C:/sql_backups" output_dir="C:/compressed_out" auto_schedule_enabled=true
 ```
 
 ---
@@ -212,82 +213,6 @@ You can configure the application to automatically start when your computer boot
 
 ---
 
-### 🐧 Linux Configuration (Ubuntu / Debian / RHEL / Arch)
-
-#### Method 1: Systemd User Service (Recommended)
-1. Create the systemd user service directory:
-   ```bash
-   mkdir -p ~/.config/systemd/user
-   ```
-2. Create `~/.config/systemd/user/hdiff-backup.service`:
-   ```ini
-   [Unit]
-   Description=HDiff SQL Server Backup Daemon
-   After=network.target
-
-   [Service]
-   Type=simple
-   WorkingDirectory=/home/username/advanced_bak_helper
-   ExecStart=/usr/bin/python3 cli.py daemon --interval 60
-   Restart=always
-   RestartSec=10
-
-   [Install]
-   WantedBy=default.target
-   ```
-3. Enable and start the service:
-   ```bash
-   systemctl --user daemon-reload
-   systemctl --user enable --now hdiff-backup.service
-   ```
-
-#### Method 2: Desktop Autostart (GUI Tray Mode)
-Create `~/.config/autostart/hdiff-backup.desktop`:
-```ini
-[Desktop Entry]
-Type=Application
-Name=HDiff Backup Pro
-Exec=python3 /home/username/advanced_bak_helper/main.py --tray
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-```
-
----
-
-### 🍎 macOS Configuration
-
-#### Method 1: Launchd User Agent (Recommended)
-1. Create `~/Library/LaunchAgents/com.hdiff.backup.plist`:
-   ```xml
-   <?xml version="1.0" encoding="UTF-8"?>
-   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-   <plist version="1.0">
-   <dict>
-       <key>Label</key>
-       <string>com.hdiff.backup</string>
-       <key>ProgramArguments</key>
-       <array>
-           <string>/usr/local/bin/python3</string>
-           <string>/Users/username/advanced_bak_helper/main.py</string>
-           <string>--tray</string>
-       </array>
-       <key>WorkingDirectory</key>
-       <string>/Users/username/advanced_bak_helper</string>
-       <key>RunAtLoad</key>
-       <true/>
-       <key>KeepAlive</key>
-       <true/>
-   </dict>
-   </plist>
-   ```
-2. Load the agent:
-   ```bash
-   launchctl load ~/Library/LaunchAgents/com.hdiff.backup.plist
-   ```
-
----
-
 ## 🔒 Security Model
 
 - **Symmetric Encryption**: AES-256 (Fernet) with dynamic 16-byte random salt per file and PBKDF2-HMAC-SHA256 (100,000 iterations).
@@ -302,4 +227,4 @@ Run the automated test suite:
 ```bash
 python test_system.py
 ```
-Validates the full cycle: differential compression, slim reference chaining, decompression, MD5 matching, AES-256 encryption, RSA digital signing, and signature rejection upon tampering.
+Validates the full cycle: differential compression, reference chain depth limiting, standalone base ZIP reset, decompression, MD5 matching, full `.ref` cloud sync, AES-256 encryption, RSA digital signing, and signature rejection upon tampering.

@@ -46,9 +46,27 @@ class SettingsView(ctk.CTkFrame):
 
         self.entry_max_size = self._add_input_row(scroll, "Max Acceptable Output Size (MB):", str(self.config.get("max_file_size_mb", 500)), row)
         row += 1
-        self.entry_max_chain = self._add_input_row(scroll, "Max Chain Length (Deltas):", str(self.config.get("max_chain_length", 10)), row)
+        self.entry_max_chain = self._add_input_row(scroll, "Max Chain Length / Hop Depth:", str(self.config.get("max_chain_length", 10)), row)
         row += 1
         self.entry_interval = self._add_input_row(scroll, "Periodic Schedule Interval (Min):", str(self.config.get("schedule_interval_min", 60)), row)
+        row += 1
+
+        ctk.CTkLabel(scroll, text="Auto-start Periodic Daemon:").grid(row=row, column=0, padx=10, pady=5, sticky="w")
+        self.switch_auto_schedule = ctk.CTkSwitch(scroll, text="Run scheduled backups automatically on launch", progress_color="#A6E3A1")
+        self.switch_auto_schedule.grid(row=row, column=1, columnspan=2, padx=10, pady=5, sticky="w")
+        if self.config.get("auto_schedule_enabled", False):
+            self.switch_auto_schedule.select()
+        else:
+            self.switch_auto_schedule.deselect()
+        row += 1
+
+        ctk.CTkLabel(scroll, text="Chain Reset Strategy:").grid(row=row, column=0, padx=10, pady=5, sticky="w")
+        self.switch_reset_zip = ctk.CTkSwitch(scroll, text="Create standalone ZIP baseline when max depth is reached (instead of ref001 delta)", progress_color="#89B4FA")
+        self.switch_reset_zip.grid(row=row, column=1, columnspan=2, padx=10, pady=5, sticky="w")
+        if self.config.get("reset_as_standalone_base_zip", False):
+            self.switch_reset_zip.select()
+        else:
+            self.switch_reset_zip.deselect()
         row += 1
 
         # Section 3: Security & Encryption
@@ -133,6 +151,8 @@ class SettingsView(ctk.CTkFrame):
             self.config.set("max_file_size_mb", int(self.entry_max_size.get().strip() or 500))
             self.config.set("max_chain_length", int(self.entry_max_chain.get().strip() or 10))
             self.config.set("schedule_interval_min", int(self.entry_interval.get().strip() or 60))
+            self.config.set("auto_schedule_enabled", bool(self.switch_auto_schedule.get()))
+            self.config.set("reset_as_standalone_base_zip", bool(self.switch_reset_zip.get()))
             self.config.set("encryption_password", self.entry_password.get().strip())
             self.config.set("local_sync_folder_path", self.entry_sync_folder.get().strip())
             self.config.set("ftp_host", self.entry_ftp_host.get().strip())

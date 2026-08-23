@@ -127,28 +127,31 @@ def cmd_sync(args, config, sync_manager):
             print("[ERROR] Output directory must exist for upload.")
             return 1
         
-        files_to_upload = []
-        for root, dirs, files in os.walk(output_dir):
-            for f in files:
-                if not f.endswith(".enc") and not f.endswith(".sig") and f != "manifest.json":
-                    files_to_upload.append(os.path.join(root, f))
-
-        print(f"Encrypting, signing and uploading {len(files_to_upload)} files to cloud...")
-        for f in files_to_upload:
-            sync_manager.upload_encrypted_and_signed(f, log_callback=lambda msg: print(f"[*] {msg}"))
-        print("[SUCCESS] All files uploaded.")
+        count = sync_manager.sync_all_upload(output_dir, log_callback=lambda msg: print(f"[*] {msg}"))
+        print(f"[SUCCESS] Cloud sync upload complete ({count} items synced, including .ref/ and manifest).")
 
     elif action == "download":
         remote_file = args.file
-        dest = args.dest or os.path.join(output_dir, remote_file.replace(".enc", ""))
-        print(f"Downloading {remote_file} -> {dest}...")
-        sync_manager.download_verify_and_decrypt(
-            remote_file_enc=remote_file,
-            dest_local_path=dest,
-            log_callback=lambda msg: print(f"[*] {msg}"),
-            signature_mismatch_callback=lambda fn: input("Signature mismatch! Proceed anyway? (y/n): ").lower() == 'y'
-        )
-        print("[SUCCESS] Download and decryption completed.")
+        if remote_file:
+            dest = args.dest or os.path.join(output_dir, remote_file.replace(".enc", ""))
+            print(f"Downloading single file {remote_file} -> {dest}...")
+            sync_manager.download_verify_and_decrypt(
+                remote_file_enc=remote_file,
+                dest_local_path=dest,
+                log_callback=lambda msg: print(f"[*] {msg}"),
+                signature_mismatch_callback=lambda fn: input("Signature mismatch! Proceed anyway? (y/n): ").lower() == 'y'
+            )
+            print("[SUCCESS] Download and decryption completed.")
+        else:
+            if not output_dir:
+                print("[ERROR] Output directory (--output) required for full sync download.")
+                return 1
+            count = sync_manager.sync_all_download(
+                output_dir=output_dir,
+                log_callback=lambda msg: print(f"[*] {msg}"),
+                signature_mismatch_callback=lambda fn: input(f"Signature mismatch on {fn}! Proceed anyway? (y/n): ").lower() == 'y'
+            )
+            print(f"[SUCCESS] Full cloud sync download complete ({count} items restored).")
     return 0
 
 def cmd_daemon(args, config, hdiff_engine, sync_manager):

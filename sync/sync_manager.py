@@ -11,7 +11,7 @@ class SyncManager:
         self.config = config
 
     def get_provider(self):
-        provider_type = self.config.get("cloud_provider", "ftp").lower()
+        provider_type = self.config.get("cloud_provider", "local_folder").lower()
         if provider_type == "ftp":
             return FTPProvider(
                 host=self.config.get("ftp_host"),
@@ -32,9 +32,10 @@ class SyncManager:
         else:
             raise ValueError(f"Unsupported cloud sync provider: {provider_type}")
 
-    def upload_encrypted_and_signed(self, local_file_path, log_callback=None):
+    def upload_encrypted_and_signed(self, local_file_path, remote_rel_name=None, log_callback=None):
         """
         Encrypts a local file with AES-256, signs it with RSA private key, and uploads both to cloud.
+        Preserves relative folder structure (including .ref/ files).
         """
         password = self.config.get("encryption_password")
         priv_key = self.config.get("rsa_private_key_path")
@@ -45,32 +46,38 @@ class SyncManager:
 
         CryptoEngine.generate_rsa_keypair(priv_key, pub_key)
         provider = self.get_provider()
-        filename = os.path.basename(local_file_path)
+        
+        rel_name = remote_rel_name if remote_rel_name else os.path.basename(local_file_path)
+        rel_name = rel_name.replace('\\', '/')
+        display_name = rel_name
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            enc_path = os.path.join(tmp_dir, f"{filename}.enc")
-            sig_path = os.path.join(tmp_dir, f"{filename}.enc.sig")
+            tmp_enc_path = os.path.join(tmp_dir, "payload.enc")
+            tmp_sig_path = os.path.join(tmp_dir, "payload.enc.sig")
 
             if log_callback:
-                log_callback(f"Encrypting file with AES-256: {filename}...")
-            CryptoEngine.encrypt_file(local_file_path, enc_path, password)
+                log_callback(f"Encrypting file with AES-256: {display_name}...")
+            CryptoEngine.encrypt_file(local_file_path, tmp_enc_path, password)
 
             if log_callback:
-                log_callback("Signing encrypted file with RSA private key...")
-            CryptoEngine.sign_file(enc_path, priv_key, sig_path)
+                log_callback(f"Signing encrypted file with RSA private key...")
+            CryptoEngine.sign_file(tmp_enc_path, priv_key, tmp_sig_path)
+
+            remote_enc_name = f"{rel_name}.enc"
+            remote_sig_name = f"{rel_name}.enc.sig"
 
             if log_callback:
-                log_callback("Uploading encrypted payload and signature to cloud / sync folder...")
+                log_callback(f"Uploading {display_name} (encrypted + signature) to cloud / sync folder...")
             
-            u1 = provider.upload_file(enc_path, f"{filename}.enc")
-            u2 = provider.upload_file(sig_path, f"{filename}.enc.sig")
+            u1 = provider.upload_file(tmp_enc_path, remote_enc_name)
+            u2 = provider.upload_file(tmp_sig_path, remote_sig_name)
 
             if u1 and u2:
                 if log_callback:
-                    log_callback(f"Upload completed successfully for {filename}.")
+                    log_callback(f"Upload completed successfully for {display_name}.")
                 return True
             else:
-                raise RuntimeError("Failed to upload encrypted file or signature to cloud provider.")
+                raise RuntimeError(f"Failed to upload encrypted file or signature for {display_name}.")
 
     def download_verify_and_decrypt(self, remote_file_enc, dest_local_path, log_callback=None, signature_mismatch_callback=None):
         """
@@ -86,8 +93,8 @@ class SyncManager:
         remote_sig_name = f"{remote_file_enc}.sig"
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_enc = os.path.join(tmp_dir, remote_file_enc)
-            tmp_sig = os.path.join(tmp_dir, remote_sig_name)
+            tmp_enc = os.path.join(tmp_dir, "temp_download.enc")
+            tmp_sig = os.path.join(tmp_dir, "temp_download.enc.sig")
 
             if log_callback:
                 log_callback(f"Downloading encrypted backup and digital signature: {remote_file_enc}...")
@@ -111,14 +118,79 @@ class SyncManager:
                 if signature_mismatch_callback:
                     proceed = signature_mismatch_callback(remote_file_enc)
                 if not proceed:
-                    raise PermissionError("Operation cancelled due to invalid digital signature.")
+                    raise PermissionError(f"Operation cancelled due to invalid digital signature on {remote_file_enc}.")
 
             if log_callback:
-                log_callback("Decrypting payload using encryption password...")
+                log_callback(f"Decrypting payload -> {dest_local_path}...")
             
-            os.makedirs(os.path.dirname(dest_local_path), exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.abspath(dest_local_path)), exist_ok=True)
             CryptoEngine.decrypt_file(tmp_enc, dest_local_path, password)
 
             if log_callback:
-                log_callback(f"Decryption and download completed successfully -> {dest_local_path}")
+                log_callback(f"Decrypted successfully: {dest_local_path}")
             return True
+
+    def sync_all_upload(self, output_dir, log_callback=None):
+        """
+        Scans output_dir AND .ref/ directory, encrypts, signs, and uploads all backup files and manifest.
+        """
+        if not output_dir or not os.path.exists(output_dir):
+            raise FileNotFoundError(f"Output directory does not exist: {output_dir}")
+
+        files_to_sync = []
+        for root, dirs, files in os.walk(output_dir):
+            for f in files:
+                if f.endswith(".enc") or f.endswith(".sig"):
+                    continue
+                full_path = os.path.join(root, f)
+                rel_path = os.path.relpath(full_path, output_dir).replace('\\', '/')
+                files_to_sync.append((full_path, rel_path))
+
+        if not files_to_sync:
+            if log_callback:
+                log_callback("No files or references found in output directory to sync.")
+            return 0
+
+        if log_callback:
+            log_callback(f"Starting cloud sync upload: {len(files_to_sync)} item(s) (including .ref/ directory)...")
+
+        uploaded_count = 0
+        for full_p, rel_p in files_to_sync:
+            self.upload_encrypted_and_signed(full_p, remote_rel_name=rel_p, log_callback=log_callback)
+            uploaded_count += 1
+
+        if log_callback:
+            log_callback(f"Cloud sync upload finished successfully. Total synced: {uploaded_count} item(s).")
+        return uploaded_count
+
+    def sync_all_download(self, output_dir, log_callback=None, signature_mismatch_callback=None):
+        """
+        Discovers all remote encrypted files (.enc), downloads, validates signatures, and restores to output_dir and .ref/.
+        """
+        provider = self.get_provider()
+        remote_files = provider.list_files()
+        enc_files = [f for f in remote_files if f.endswith(".enc")]
+
+        if not enc_files:
+            if log_callback:
+                log_callback("No encrypted files (.enc) found in cloud storage.")
+            return 0
+
+        if log_callback:
+            log_callback(f"Discovered {len(enc_files)} remote encrypted backup item(s). Starting download and restore...")
+
+        downloaded_count = 0
+        for remote_enc in enc_files:
+            rel_dest = remote_enc[:-4]  # Remove .enc extension
+            dest_full_path = os.path.join(output_dir, rel_dest)
+            self.download_verify_and_decrypt(
+                remote_file_enc=remote_enc,
+                dest_local_path=dest_full_path,
+                log_callback=log_callback,
+                signature_mismatch_callback=signature_mismatch_callback
+            )
+            downloaded_count += 1
+
+        if log_callback:
+            log_callback(f"Cloud sync download complete! Restored {downloaded_count} item(s) to {output_dir}.")
+        return downloaded_count

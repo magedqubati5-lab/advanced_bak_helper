@@ -1,10 +1,13 @@
 import os
+import sys
 import subprocess
 import zipfile
 import re
 import tempfile
 from hasher import calculate_md5, verify_md5
 from hdiff_engine import HDiffEngine
+
+SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 class RestoreEngine:
     def __init__(self, config):
@@ -23,107 +26,107 @@ class RestoreEngine:
         if match:
             return {
                 "original_filename": match.group(1),
-                "md5": match.group(2).lower(),
+                "md5": match.group(2),
                 "ref_tag": match.group(3)
             }
         return None
 
     def list_restorable_backups(self, output_dir):
         """
-        Scans output_dir and .ref/ to return a list of all restorable backup archives.
-        Returns a list of dicts:
-        [{
-            'file_name': ...,
-            'full_path': ...,
-            'original_filename': ...,
-            'type': 'Differential Patch' | 'Baseline Reference',
-            'ref_tag': ...,
-            'md5': ...,
-            'size_bytes': ...,
-            'size_formatted': ...,
-            'modified_time': ...
-        }]
+        Scans output_dir and .ref/ to return structured metadata about all restorable backups.
+        Supports sorting and filtering in the UI table.
         """
-        items = []
-        if not output_dir or not os.path.exists(output_dir):
-            return items
+        if not os.path.exists(output_dir):
+            return []
 
+        backups = []
         ref_dir = os.path.join(output_dir, ".ref")
-        manifest = self.hdiff_engine.load_manifest(output_dir)
-        processed_files = manifest.get("processed_files", {})
+        manifest_path = os.path.join(ref_dir, "manifest.json")
+        manifest = {}
 
-        # 1. Processed differential files in output_dir
-        for entry in os.listdir(output_dir):
-            full_path = os.path.join(output_dir, entry)
-            if not os.path.isfile(full_path) or not entry.endswith(".hdiff"):
-                continue
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+            except Exception:
+                pass
 
-            parsed = self.parse_hdiff_filename(entry)
-            st = os.stat(full_path)
-            size_mb = st.st_size / (1024 * 1024)
+        processed_map = manifest.get("processed_files", {})
 
-            items.append({
-                "file_name": entry,
-                "full_path": full_path,
-                "original_filename": parsed["original_filename"] if parsed else entry,
-                "type": "Differential Patch",
-                "ref_tag": parsed["ref_tag"] if parsed else "Unknown",
-                "md5": parsed["md5"] if parsed else "",
-                "size_bytes": st.st_size,
-                "size_formatted": f"{size_mb:.2f} MB" if size_mb >= 0.01 else f"{st.st_size / 1024:.2f} KB",
-                "modified_time": st.st_mtime
-            })
-
-        # 2. Base reference zip in .ref/
+        # 1. Check baseline zip in .ref/
         if os.path.exists(ref_dir):
-            for entry in os.listdir(ref_dir):
-                if entry.endswith(".zip"):
-                    full_path = os.path.join(ref_dir, entry)
-                    st = os.stat(full_path)
-                    size_mb = st.st_size / (1024 * 1024)
+            for f in os.listdir(ref_dir):
+                if f.endswith(".zip") and "-ref" in f:
+                    full_p = os.path.join(ref_dir, f)
+                    size = os.path.getsize(full_p)
+                    mtime = os.path.getmtime(full_p)
+                    # Extract tag (e.g. ref001)
+                    tag_match = re.search(r"-(ref\d{3})\.zip$", f)
+                    ref_tag = tag_match.group(1) if tag_match else "ref001"
                     
-                    # Look up original filename from manifest
-                    orig_name = entry
-                    ref_hash = entry.split("-")[0] if "-" in entry else ""
-                    for orig, info in processed_files.items():
-                        if info.get("is_reference") and info.get("output_file") == entry:
+                    # Original name lookup from manifest or zip inspection
+                    orig_name = "Base Reference Archive"
+                    for orig, p_info in processed_map.items():
+                        if p_info.get("output_file") == f:
                             orig_name = orig
-                            ref_hash = info.get("hash", ref_hash)
                             break
 
-                    items.append({
-                        "file_name": entry,
-                        "full_path": full_path,
+                    backups.append({
+                        "filename": f,
+                        "file_path": full_p,
                         "original_filename": orig_name,
-                        "type": "Baseline Reference (ZIP)",
-                        "ref_tag": "ref001",
-                        "md5": ref_hash,
-                        "size_bytes": st.st_size,
-                        "size_formatted": f"{size_mb:.2f} MB" if size_mb >= 0.01 else f"{st.st_size / 1024:.2f} KB",
-                        "modified_time": st.st_mtime
+                        "ref_tag": ref_tag,
+                        "type": "Base Reference (.zip)",
+                        "size_bytes": size,
+                        "size_formatted": f"{size / (1024*1024):.2f} MB",
+                        "mtime": mtime,
+                        "is_zip_base": True
                     })
 
-        # Sort by modified time descending (newest first)
-        items.sort(key=lambda x: x["modified_time"], reverse=True)
-        return items
+        # 2. Check differential patches in output_dir
+        for f in os.listdir(output_dir):
+            if f.endswith(".hdiff"):
+                full_p = os.path.join(output_dir, f)
+                info = self.parse_hdiff_filename(full_p)
+                if info:
+                    size = os.path.getsize(full_p)
+                    mtime = os.path.getmtime(full_p)
+                    backups.append({
+                        "filename": f,
+                        "file_path": full_p,
+                        "original_filename": info["original_filename"],
+                        "ref_tag": info["ref_tag"],
+                        "type": f"Differential Delta ({info['ref_tag']})",
+                        "size_bytes": size,
+                        "size_formatted": f"{size / (1024*1024):.2f} MB",
+                        "mtime": mtime,
+                        "is_zip_base": False,
+                        "md5": info["md5"]
+                    })
 
-    def restore_file(self, target_file_path, output_dir, destination_dir, log_callback=None, progress_callback=None):
+        return backups
+
+    def restore_file(self, target_file_path, output_dir, destination_dir, log_callback=None):
         """
-        Restores a backup file from a .hdiff patch or .zip baseline reference.
+        Reconstructs the original backup file at destination_dir.
+        If target is a baseline .zip, extracts directly.
+        If target is an .hdiff, materializes its reference and applies hpatchz.
+        Performs 100% MD5 integrity check at the end.
         """
         hpatchz_path = self.config.get("hpatchz_path")
         if not os.path.exists(hpatchz_path):
-            raise FileNotFoundError(f"HPatchZ executable not found at: {hpatchz_path}")
+            raise FileNotFoundError(f"Executable hpatchz not found at: {hpatchz_path}")
 
-        if not os.path.exists(destination_dir):
-            os.makedirs(destination_dir, exist_ok=True)
+        if not os.path.exists(target_file_path):
+            raise FileNotFoundError(f"Target backup file not found: {target_file_path}")
 
+        os.makedirs(destination_dir, exist_ok=True)
         filename = os.path.basename(target_file_path)
 
-        # Case 1: Target file is a ZIP baseline reference directly
-        if filename.endswith(".zip"):
+        # Case 1: Target file is the baseline ZIP archive in .ref/
+        if target_file_path.endswith(".zip"):
             if log_callback:
-                log_callback(f"Extracting baseline reference from ZIP archive: {filename}...")
+                log_callback(f"Extracting baseline reference ZIP: {filename}...")
             with zipfile.ZipFile(target_file_path, 'r') as z:
                 extracted_files = z.namelist()
                 if not extracted_files:
@@ -157,13 +160,12 @@ class RestoreEngine:
             raw_ref_path = self.hdiff_engine.materialize_reference(ref_tag, output_dir, tmp_work, log_callback)
 
             destination_file_path = os.path.join(destination_dir, original_name)
-            if log_callback:
-                log_callback(f"Applying hpatchz delta to reconstruct original file: {original_name}...")
-
-            cmd = [hpatchz_path, raw_ref_path, target_file_path, destination_file_path]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Note: -f forces overwrite, CREATE_NO_WINDOW suppresses console window popup
+            cmd = [hpatchz_path, "-f", raw_ref_path, target_file_path, destination_file_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=SUBPROCESS_FLAGS)
             if result.returncode != 0:
-                raise RuntimeError(f"Error running hpatchz: {result.stderr}")
+                err_msg = (result.stderr or result.stdout or "Unknown hpatchz error").strip()
+                raise RuntimeError(f"Error running hpatchz: {err_msg}")
 
             if log_callback:
                 log_callback("File reconstructed. Performing post-restoration MD5 integrity validation...")
@@ -180,8 +182,8 @@ class RestoreEngine:
             return {
                 "success": True,
                 "restored_path": destination_file_path,
-                "expected_md5": expected_md5,
                 "actual_md5": actual_md5,
+                "expected_md5": expected_md5,
                 "md5_matched": md5_matched,
                 "message": status_msg
             }

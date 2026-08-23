@@ -36,6 +36,7 @@ DEFAULT_CONFIG = {
     "hpatchz_path": resolve_binary("hpatchz"),
     "max_file_size_mb": 500,
     "max_chain_length": 10,
+    "reset_as_standalone_base_zip": False,
     "schedule_interval_min": 60,
     "auto_schedule_enabled": False,
     "encryption_password": "",

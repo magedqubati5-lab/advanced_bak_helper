@@ -59,15 +59,15 @@ class CloudSyncView(ctk.CTkFrame):
         up_card.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
 
         ctk.CTkLabel(up_card, text="⬆️ Auto / Manual Upload (Local ➔ Cloud)", font=ctk.CTkFont(size=14, weight="bold"), text_color="#89B4FA").pack(pady=10)
-        self.btn_upload_all = ctk.CTkButton(up_card, text="Encrypt, Sign & Upload Output Backups", command=self._start_upload_thread, fg_color="#89B4FA", text_color="#11111B", font=ctk.CTkFont(weight="bold"))
+        self.btn_upload_all = ctk.CTkButton(up_card, text="Encrypt, Sign & Sync All (.ref & Deltas)", command=self._start_upload_thread, fg_color="#89B4FA", text_color="#11111B", font=ctk.CTkFont(weight="bold"))
         self.btn_upload_all.pack(pady=(0, 10), padx=10, fill="x")
 
         # Download Column (Cloud -> Local)
         dn_card = ctk.CTkFrame(body, corner_radius=8, fg_color="#181825", border_width=1, border_color="#313244")
         dn_card.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
-        ctk.CTkLabel(dn_card, text="⬇️ Manual Download & Verify (Cloud ➔ Local)", font=ctk.CTkFont(size=14, weight="bold"), text_color="#A6E3A1").pack(pady=10)
-        self.btn_list_remote = ctk.CTkButton(dn_card, text="Download, Verify Signature & Decrypt", command=self._start_download_thread, fg_color="#A6E3A1", text_color="#11111B", font=ctk.CTkFont(weight="bold"))
+        ctk.CTkLabel(dn_card, text="⬇️ Manual Download & Restore (Cloud ➔ Local)", font=ctk.CTkFont(size=14, weight="bold"), text_color="#A6E3A1").pack(pady=10)
+        self.btn_list_remote = ctk.CTkButton(dn_card, text="Download All, Verify Signatures & Restore", command=self._start_download_thread, fg_color="#A6E3A1", text_color="#11111B", font=ctk.CTkFont(weight="bold"))
         self.btn_list_remote.pack(pady=(0, 10), padx=10, fill="x")
 
         # Logs box
@@ -115,40 +115,25 @@ class CloudSyncView(ctk.CTkFrame):
 
         def worker():
             try:
-                files_to_upload = []
-                for root, dirs, files in os.walk(output_dir):
-                    for f in files:
-                        if not f.endswith(".enc") and not f.endswith(".sig") and f != "manifest.json":
-                            files_to_upload.append(os.path.join(root, f))
-
-                if not files_to_upload:
-                    self.log("No processed backup files found to upload.")
-                    return
-
-                for file_path in files_to_upload:
-                    self.log(f"Uploading file: {os.path.basename(file_path)}...")
-                    self.sync_manager.upload_encrypted_and_signed(file_path, log_callback=self.log)
-
-                self.log("All backups encrypted, signed, and uploaded successfully.")
+                self.btn_upload_all.configure(state="disabled")
+                self.sync_manager.sync_all_upload(output_dir, log_callback=self.log)
             except Exception as e:
                 self.log(f"Upload error: {e}")
+                messagebox.showerror("Sync Error", str(e))
+            finally:
+                self.btn_upload_all.configure(state="normal")
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _start_download_thread(self):
+        output_dir = self.config.get("output_dir")
+        if not output_dir:
+            messagebox.showerror("Error", "Please configure a valid Output Directory in Settings first.")
+            return
+
         def worker():
             try:
-                provider = self.sync_manager.get_provider()
-                remote_files = provider.list_files()
-                enc_files = [f for f in remote_files if f.endswith(".enc")]
-
-                if not enc_files:
-                    self.log("No encrypted files (.enc) found in cloud storage.")
-                    return
-
-                target_enc = enc_files[0]
-                dest_local = os.path.join(self.config.get("output_dir", "./output_backups"), target_enc.replace(".enc", ""))
-
+                self.btn_list_remote.configure(state="disabled")
                 def on_mismatch(filename):
                     return messagebox.askyesno(
                         "Digital Signature Warning",
@@ -156,13 +141,15 @@ class CloudSyncView(ctk.CTkFrame):
                         icon="warning"
                     )
 
-                self.sync_manager.download_verify_and_decrypt(
-                    remote_file_enc=target_enc,
-                    dest_local_path=dest_local,
+                self.sync_manager.sync_all_download(
+                    output_dir=output_dir,
                     log_callback=self.log,
                     signature_mismatch_callback=on_mismatch
                 )
             except Exception as e:
                 self.log(f"Download error: {e}")
+                messagebox.showerror("Download Error", str(e))
+            finally:
+                self.btn_list_remote.configure(state="normal")
 
         threading.Thread(target=worker, daemon=True).start()

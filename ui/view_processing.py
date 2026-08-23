@@ -11,6 +11,12 @@ class ProcessingView(ctk.CTkFrame):
         self.sync_manager = sync_manager
         self.is_processing = False
 
+        # Hook scheduler callbacks so background runs appear in the UI
+        self.scheduler.log_callback = self.log
+        self.scheduler.progress_callback = self._on_progress_update
+        self.scheduler.on_run_start = self._on_scheduler_run_start
+        self.scheduler.on_run_end = self._on_scheduler_run_end
+
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
 
@@ -88,9 +94,54 @@ class ProcessingView(ctk.CTkFrame):
             self.log_textbox.see("end")
         self.after(0, _do_log)
 
+    def _set_ui_processing_state(self, active: bool):
+        self.is_processing = active
+        if active:
+            self.btn_process.configure(state="disabled")
+            self.btn_stop.configure(state="normal")
+        else:
+            self.btn_process.configure(state="normal")
+            self.btn_stop.configure(state="disabled")
+
+    def _on_scheduler_run_start(self):
+        def _ui():
+            self._set_ui_processing_state(True)
+            self.progress_bar.set(0)
+        self.after(0, _ui)
+
+    def _on_scheduler_run_end(self):
+        def _ui():
+            self._set_ui_processing_state(False)
+            self.refresh_stats()
+        self.after(0, _ui)
+
+    def _on_progress_update(self, fraction, stats=None):
+        def _update():
+            self.progress_bar.set(fraction)
+            if stats:
+                self.card_pending.configure(text=str(stats.get("remaining_pending", 0)))
+                self.card_processed.configure(text=str(stats.get("total_processed", 0)))
+                active_tag = stats.get("active_ref_tag")
+                if active_tag and active_tag != "None":
+                    self.card_ref.configure(text=active_tag)
+        self.after(0, _update)
+
     def refresh_stats(self):
         input_dir = self.config.get("input_dir")
         output_dir = self.config.get("output_dir")
+
+        sched_running = self.scheduler.is_running()
+        proc_running = self.is_processing or self.scheduler.is_processing_active()
+
+        # Update button & card states for scheduler
+        if sched_running:
+            self.card_schedule.configure(text="Running", text_color="#A6E3A1")
+            self.btn_schedule_toggle.configure(text="🛑 Stop Periodic Daemon", fg_color="#F38BA8", hover_color="#EBA0AC")
+        else:
+            self.card_schedule.configure(text="Stopped", text_color="#E63946")
+            self.btn_schedule_toggle.configure(text="⏱️ Enable Periodic Daemon", fg_color="#A6E3A1", hover_color="#94E2D5")
+
+        self._set_ui_processing_state(proc_running)
 
         if not input_dir or not output_dir or not os.path.exists(input_dir) or not os.path.exists(output_dir):
             self.card_pending.configure(text="Not Configured")
@@ -109,10 +160,6 @@ class ProcessingView(ctk.CTkFrame):
             self.card_processed.configure(text=str(processed_count))
             self.card_ref.configure(text=ref_text)
 
-            sched_text = "Running" if self.scheduler.is_running() else "Stopped"
-            sched_color = "#A6E3A1" if self.scheduler.is_running() else "#E63946"
-            self.card_schedule.configure(text=sched_text, text_color=sched_color)
-
         self.after(0, _update)
         self.log(f"Directory scan completed: {len(unprocessed)} pending file(s), {processed_count} processed backup(s).")
 
@@ -130,54 +177,37 @@ class ProcessingView(ctk.CTkFrame):
         self.card_pending.configure(text=str(len(unprocessed)))
         self.card_processed.configure(text=str(len(manifest.get("processed_files", {}))))
         
-        self.is_processing = True
-        self.btn_process.configure(state="disabled")
-        self.btn_stop.configure(state="normal")
+        self._set_ui_processing_state(True)
         self.progress_bar.set(0)
 
         def worker():
             try:
-                def prog(fraction, stats=None):
-                    def update_ui():
-                        self.progress_bar.set(fraction)
-                        if stats:
-                            self.card_pending.configure(text=str(stats.get("remaining_pending", 0)))
-                            self.card_processed.configure(text=str(stats.get("total_processed", 0)))
-                            active_tag = stats.get("active_ref_tag")
-                            if active_tag and active_tag != "None":
-                                self.card_ref.configure(text=active_tag)
-                    self.after(0, update_ui)
-
                 count = self.hdiff_engine.process_backups(
                     input_dir=input_dir,
                     output_dir=output_dir,
                     log_callback=self.log,
-                    progress_callback=prog
+                    progress_callback=self._on_progress_update
                 )
                 self.log(f"Differential backup operation finished. Total processed in this run: {count}")
             except Exception as e:
                 self.log(f"Processing error: {e}")
             finally:
                 def finalize_ui():
-                    self.is_processing = False
-                    self.btn_process.configure(state="normal")
-                    self.btn_stop.configure(state="disabled")
+                    self._set_ui_processing_state(False)
                     self.refresh_stats()
                 self.after(0, finalize_ui)
 
         threading.Thread(target=worker, daemon=True).start()
 
     def stop_processing(self):
-        if self.is_processing:
-            self.log("Stopping processing... waiting for current file to finalize safely.")
+        if self.is_processing or self.scheduler.is_processing_active():
+            self.log("Stopping current processing... Operation will halt safely after current file and retry on next schedule.")
             self.hdiff_engine.request_cancel()
             self.btn_stop.configure(state="disabled")
 
     def toggle_schedule(self):
         if self.scheduler.is_running():
             self.scheduler.stop()
-            self.btn_schedule_toggle.configure(text="⏱️ Enable Periodic Daemon", fg_color="#A6E3A1")
         else:
             self.scheduler.start()
-            self.btn_schedule_toggle.configure(text="⏸️ Stop Periodic Daemon", fg_color="#F38BA8")
         self.refresh_stats()
