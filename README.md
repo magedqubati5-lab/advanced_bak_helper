@@ -49,15 +49,19 @@ You can obtain precompiled official release binaries directly from the **[HDiffP
   - Pre-upload encryption using AES-256 (Fernet with PBKDF2 key derivation).
   - Dual-key asymmetric signing using RSA-2048 (PSS with SHA-256).
   - Full synchronization of both `output/` backups and `.ref/` chain archives.
+  - Smart skipping: only uploads new files and latest manifest without redundant re-uploads.
 - **Zero-Setup Cloud Synchronization**:
   - **GDrive Desktop / Synced Folders (Easiest)**: Zero API setup. Point directly to `G:\My Drive\Backups`, OneDrive, Dropbox, or a network share.
-  - **FTP / FTPS Server**: Direct file transfer to standard FTP servers.
+  - **FTP / FTPS Server**: Direct file transfer to standard FTP servers with nested path support.
   - **Google Drive API**: Headless authentication using Service Account JSON keys.
 - **Background System Tray & Status Indicators**:
   - **Double-click** the tray icon to restore the main window.
-  - **Dynamic Status Colors**: 🟢 Green badge when periodic daemon is running; 🔴 Red badge when stopped.
+  - **Dynamic Status Colors**: 🟢 Full Green mask when periodic daemon is running; 🔴 Full Red mask when stopped.
   - **Hover Tooltips**: Live scheduler status displayed on mouse hover.
   - Silent background execution (`subprocess.CREATE_NO_WINDOW`) with zero CMD window flashes.
+- **Unified Binary / Dual GUI & CLI Support**:
+  - `main.py` seamlessly executes both the GUI/Tray and all CLI subcommands (`scan`, `process`, `restore`, `sync`, `daemon`, `config`).
+  - Supports compilation to a standalone `.exe` using PyInstaller.
 
 ---
 
@@ -124,58 +128,95 @@ python main.py
    - Set max differential patch size (MB) and max chain depth limit.
    - Toggle Standalone Base ZIP reset strategy.
    - Configure scheduler interval (minutes) and auto-start switch.
+   - Toggle automatic cloud sync after scheduled backups.
    - Set encryption password and cloud credentials.
 
 ---
 
 ## 💻 Command Line Interface (CLI)
 
-Use `cli.py` (or `main.py <command>`) to perform all actions from the terminal:
+Use `main.py <command>` (or `cli.py <command>`) to perform all actions directly from the terminal:
 
 ### 1. Scan Input Directory
 ```bash
-python cli.py scan
-python cli.py scan --input "C:/sql_backups" --output "C:/compressed_out"
+python main.py scan
+python main.py scan --input "C:/sql_backups" --output "C:/compressed_out"
 ```
 
 ### 2. Execute Differential Backup
 ```bash
-python cli.py process
-python cli.py process --max-size 500 --max-chain 10
+python main.py process
+python main.py process --max-size 500 --max-chain 10
 ```
 
 ### 3. List Restorable Backups
 ```bash
-python cli.py list
+python main.py list
 ```
 
 ### 4. Restore a Backup
 ```bash
-python cli.py restore --file "output_backups/MyDB.bak.a1b2c3d4...ref001.hdiff" --dest "C:/restored_db"
+python main.py restore --file "output_backups/MyDB.bak.a1b2c3d4...ref001.hdiff" --dest "C:/restored_db"
 ```
 
 ### 5. Cloud Synchronization
 ```bash
-# Upload and encrypt output files and .ref/ directory
-python cli.py sync upload
+# Upload and encrypt output files and .ref/ directory (skips already existing files)
+python main.py sync upload
 
 # Download and verify remote files
-python cli.py sync download
+python main.py sync download
 ```
 
 ### 6. Run Scheduler Daemon in Console
 ```bash
-python cli.py daemon --interval 30
+python main.py daemon --interval 30
 ```
 
 ### 7. Manage Configuration
 ```bash
 # Show configuration
-python cli.py config --show
+python main.py config --show
 
 # Set configuration keys
-python cli.py config --set input_dir="C:/sql_backups" output_dir="C:/compressed_out" auto_schedule_enabled=true
+python main.py config --set input_dir="C:/sql_backups" output_dir="C:/compressed_out" auto_schedule_enabled=true
 ```
+
+---
+
+## 📦 Building Executable with PyInstaller (Unified Single EXE)
+
+You can package the entire application into a standalone executable (`.exe`) that works seamlessly in **both GUI/Tray and CLI modes**:
+
+### 1. Install PyInstaller
+```bash
+pip install pyinstaller
+```
+
+### 2. Build the Executable
+Run the following build command in PowerShell / Terminal:
+```bash
+pyinstaller --noconfirm --onedir --windowed `
+    --name "HDiffBackupPro" `
+    --add-data "bin;bin" `
+    --add-data "assets;assets" `
+    --icon "assets/app_icon.jpg" `
+    main.py
+```
+*(Or use `--onefile` if you prefer a single `.exe` file).*
+
+### 3. Running the Compiled Executable:
+- **GUI Mode**: Double-click `HDiffBackupPro.exe` (or run without arguments).
+- **Tray Mode**: `HDiffBackupPro.exe --tray` (runs minimized in system tray).
+- **CLI Mode**: Run directly in CMD or PowerShell:
+  ```cmd
+  HDiffBackupPro.exe scan
+  HDiffBackupPro.exe process
+  HDiffBackupPro.exe list
+  HDiffBackupPro.exe restore --file "output/db.bak...hdiff" --dest "C:/restored"
+  HDiffBackupPro.exe sync upload
+  HDiffBackupPro.exe config --show
+  ```
 
 ---
 
@@ -192,7 +233,7 @@ You can configure the application to automatically start when your computer boot
    ```cmd
    pythonw.exe "C:\path\to\advanced_bak_helper\main.py" --tray
    ```
-   *(Note: `pythonw.exe` runs Python in background mode without opening an empty black command prompt window).*
+   *(Or point to `HDiffBackupPro.exe --tray` if using the compiled executable).*
 4. Set the "Start in" property of the shortcut to `C:\path\to\advanced_bak_helper`.
 5. Click **Finish**.
 
@@ -206,8 +247,8 @@ You can configure the application to automatically start when your computer boot
    - New Trigger: `At log on` (or `At startup`).
 5. On the **Actions** tab:
    - Action: `Start a program`
-   - Program/script: `pythonw.exe`
-   - Add arguments: `"C:\path\to\advanced_bak_helper\main.py" --tray`
+   - Program/script: `pythonw.exe` (or `HDiffBackupPro.exe`)
+   - Add arguments: `"C:\path\to\advanced_bak_helper\main.py" --tray` (or `--tray`)
    - Start in: `C:\path\to\advanced_bak_helper`
 6. Click **OK**.
 
@@ -227,4 +268,4 @@ Run the automated test suite:
 ```bash
 python test_system.py
 ```
-Validates the full cycle: differential compression, reference chain depth limiting, standalone base ZIP reset, decompression, MD5 matching, full `.ref` cloud sync, AES-256 encryption, RSA digital signing, and signature rejection upon tampering.
+Validates the full cycle: differential compression, reference chain depth limiting, standalone base ZIP reset, decompression, MD5 matching, full `.ref` cloud sync, smart skipping of existing cloud files, AES-256 encryption, RSA digital signing, and signature rejection upon tampering.

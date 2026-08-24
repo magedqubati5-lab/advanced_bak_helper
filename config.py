@@ -39,6 +39,7 @@ DEFAULT_CONFIG = {
     "reset_as_standalone_base_zip": False,
     "schedule_interval_min": 60,
     "auto_schedule_enabled": False,
+    "auto_cloud_sync": True,
     "encryption_password": "",
     "local_sync_folder_path": "",
     "rsa_private_key_path": os.path.abspath(os.path.join("keys", "private_key.pem")),

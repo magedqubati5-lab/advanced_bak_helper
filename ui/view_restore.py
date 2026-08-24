@@ -116,25 +116,30 @@ class RestoreView(ctk.CTkFrame):
         # 1. Filter
         filtered = []
         for b in self.all_backups:
+            fname = b.get("file_name", b.get("filename", ""))
+            oname = b.get("original_filename", "")
+            rtag = b.get("ref_tag", "")
+            md5_str = b.get("md5", "")
+
             if not query or (
-                query in b["file_name"].lower() or
-                query in b["original_filename"].lower() or
-                query in b["ref_tag"].lower() or
-                query in b["md5"].lower()
+                query in fname.lower() or
+                query in oname.lower() or
+                query in rtag.lower() or
+                query in md5_str.lower()
             ):
                 filtered.append(b)
 
         # 2. Sort
         if "Newest" in sort_mode:
-            filtered.sort(key=lambda x: x["modified_time"], reverse=True)
+            filtered.sort(key=lambda x: x.get("modified_time", x.get("mtime", 0)), reverse=True)
         elif "Oldest" in sort_mode:
-            filtered.sort(key=lambda x: x["modified_time"], reverse=False)
+            filtered.sort(key=lambda x: x.get("modified_time", x.get("mtime", 0)), reverse=False)
         elif "Name" in sort_mode:
-            filtered.sort(key=lambda x: x["original_filename"].lower())
+            filtered.sort(key=lambda x: x.get("original_filename", "").lower())
         elif "Size" in sort_mode:
-            filtered.sort(key=lambda x: x["size_bytes"], reverse=True)
+            filtered.sort(key=lambda x: x.get("size_bytes", 0), reverse=True)
         elif "Ref Tag" in sort_mode:
-            filtered.sort(key=lambda x: x["ref_tag"])
+            filtered.sort(key=lambda x: x.get("ref_tag", ""))
 
         self.filtered_backups = filtered
         self._render_table_rows()
@@ -155,20 +160,22 @@ class RestoreView(ctk.CTkFrame):
             row_frame.grid_columnconfigure(1, weight=1)
 
             # Left badge: Ref Tag
-            tag_color = "#89B4FA" if item["type"] == "Differential Patch" else "#A6E3A1"
-            tag_badge = ctk.CTkLabel(row_frame, text=f" {item['ref_tag']} ", font=ctk.CTkFont(size=11, weight="bold"), fg_color=tag_color, text_color="#11111B", corner_radius=4)
+            tag_color = "#89B4FA" if item.get("type", "").startswith("Differential") else "#A6E3A1"
+            tag_badge = ctk.CTkLabel(row_frame, text=f" {item.get('ref_tag', 'ref001')} ", font=ctk.CTkFont(size=11, weight="bold"), fg_color=tag_color, text_color="#11111B", corner_radius=4)
             tag_badge.grid(row=0, column=0, padx=10, pady=8)
 
             # Center Details
             details_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
             details_frame.grid(row=0, column=1, padx=5, pady=4, sticky="w")
 
-            lbl_name = ctk.CTkLabel(details_frame, text=item["original_filename"], font=ctk.CTkFont(size=13, weight="bold"), text_color="#CDD6F4")
+            orig_name = item.get("original_filename", item.get("filename", "Unknown"))
+            lbl_name = ctk.CTkLabel(details_frame, text=orig_name, font=ctk.CTkFont(size=13, weight="bold"), text_color="#CDD6F4")
             lbl_name.pack(anchor="w")
 
-            date_str = datetime.datetime.fromtimestamp(item["modified_time"]).strftime("%Y-%m-%d %H:%M:%S")
-            md5_short = f"MD5: {item['md5'][:10]}..." if item['md5'] else ""
-            lbl_sub = ctk.CTkLabel(details_frame, text=f"{item['type']} • {item['size_formatted']} • {date_str} • {md5_short}", font=ctk.CTkFont(size=11), text_color="#A6ADC8")
+            mtime = item.get("modified_time", item.get("mtime", 0))
+            date_str = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S") if mtime else ""
+            md5_short = f"MD5: {item['md5'][:10]}..." if item.get('md5') else ""
+            lbl_sub = ctk.CTkLabel(details_frame, text=f"{item.get('type', '')} • {item.get('size_formatted', '')} • {date_str} • {md5_short}", font=ctk.CTkFont(size=11), text_color="#A6ADC8")
             lbl_sub.pack(anchor="w")
 
             # Right Select / Restore Button
@@ -184,9 +191,13 @@ class RestoreView(ctk.CTkFrame):
 
     def _select_backup(self, backup_item):
         self.selected_backup = backup_item
-        self.lbl_selected.configure(text=f"Selected: {backup_item['original_filename']} ({backup_item['ref_tag']} • {backup_item['size_formatted']})", text_color="#89B4FA")
+        orig_name = backup_item.get("original_filename", backup_item.get("filename", "Unknown"))
+        ref_tag = backup_item.get("ref_tag", "")
+        size_fmt = backup_item.get("size_formatted", "")
+        fname = backup_item.get("file_name", backup_item.get("filename", ""))
+        self.lbl_selected.configure(text=f"Selected: {orig_name} ({ref_tag} • {size_fmt})", text_color="#89B4FA")
         self.btn_restore_selected.configure(state="normal")
-        self.log(f"Selected backup for restore: {backup_item['file_name']}")
+        self.log(f"Selected backup for restore: {fname}")
 
     def _on_restore_selected_clicked(self):
         if not self.selected_backup:
@@ -198,7 +209,7 @@ class RestoreView(ctk.CTkFrame):
             return  # User cancelled folder picker
 
         output_dir = self.config.get("output_dir")
-        target_file = self.selected_backup["full_path"]
+        target_file = self.selected_backup.get("full_path", self.selected_backup.get("file_path", ""))
 
         self.btn_restore_selected.configure(state="disabled")
         self.progress_bar.start()

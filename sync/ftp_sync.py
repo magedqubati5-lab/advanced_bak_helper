@@ -45,8 +45,20 @@ class FTPProvider(CloudSyncProvider):
             return False
         try:
             ftp = self._connect()
+            norm_name = remote_name.replace('\\', '/')
+            parts = norm_name.split('/')
+            filename = parts[-1]
+            if len(parts) > 1:
+                # Ensure remote subdirectories exist
+                subdirs = parts[:-1]
+                for sd in subdirs:
+                    try:
+                        ftp.cwd(sd)
+                    except ftplib.error_perm:
+                        ftp.mkd(sd)
+                        ftp.cwd(sd)
             with open(local_path, 'rb') as f:
-                ftp.storbinary(f'STOR {remote_name}', f)
+                ftp.storbinary(f'STOR {filename}', f)
             ftp.quit()
             return True
         except Exception as e:
@@ -56,9 +68,16 @@ class FTPProvider(CloudSyncProvider):
     def download_file(self, remote_name: str, local_path: str) -> bool:
         try:
             ftp = self._connect()
+            norm_name = remote_name.replace('\\', '/')
+            parts = norm_name.split('/')
+            filename = parts[-1]
+            if len(parts) > 1:
+                subdirs = parts[:-1]
+                for sd in subdirs:
+                    ftp.cwd(sd)
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             with open(local_path, 'wb') as f:
-                ftp.retrbinary(f'RETR {remote_name}', f.write)
+                ftp.retrbinary(f'RETR {filename}', f.write)
             ftp.quit()
             return True
         except Exception as e:
@@ -68,10 +87,29 @@ class FTPProvider(CloudSyncProvider):
     def list_files(self) -> list[str]:
         try:
             ftp = self._connect()
-            files = []
-            ftp.retrlines('NLST', files.append)
+            all_files = []
+
+            def _scan(current_prefix):
+                entries = []
+                try:
+                    ftp.retrlines('NLST', entries.append)
+                except Exception:
+                    return
+                for item in entries:
+                    if item in ('.', '..'):
+                        continue
+                    item_rel = f"{current_prefix}/{item}" if current_prefix else item
+                    # Test if it's a directory
+                    try:
+                        ftp.cwd(item)
+                        _scan(item_rel)
+                        ftp.cwd('..')
+                    except ftplib.error_perm:
+                        all_files.append(item_rel)
+
+            _scan("")
             ftp.quit()
-            return files
+            return all_files
         except Exception as e:
             print(f"FTP list error: {e}")
             return []

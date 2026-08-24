@@ -60,6 +60,15 @@ class SettingsView(ctk.CTkFrame):
             self.switch_auto_schedule.deselect()
         row += 1
 
+        ctk.CTkLabel(scroll, text="Automatic Cloud Sync:").grid(row=row, column=0, padx=10, pady=5, sticky="w")
+        self.switch_auto_cloud_sync = ctk.CTkSwitch(scroll, text="Auto-sync backups to cloud storage after scheduled backups", progress_color="#A6E3A1")
+        self.switch_auto_cloud_sync.grid(row=row, column=1, columnspan=2, padx=10, pady=5, sticky="w")
+        if self.config.get("auto_cloud_sync", True):
+            self.switch_auto_cloud_sync.select()
+        else:
+            self.switch_auto_cloud_sync.deselect()
+        row += 1
+
         ctk.CTkLabel(scroll, text="Chain Reset Strategy:").grid(row=row, column=0, padx=10, pady=5, sticky="w")
         self.switch_reset_zip = ctk.CTkSwitch(scroll, text="Create standalone ZIP baseline when max depth is reached (instead of ref001 delta)", progress_color="#89B4FA")
         self.switch_reset_zip.grid(row=row, column=1, columnspan=2, padx=10, pady=5, sticky="w")
@@ -152,6 +161,7 @@ class SettingsView(ctk.CTkFrame):
             self.config.set("max_chain_length", int(self.entry_max_chain.get().strip() or 10))
             self.config.set("schedule_interval_min", int(self.entry_interval.get().strip() or 60))
             self.config.set("auto_schedule_enabled", bool(self.switch_auto_schedule.get()))
+            self.config.set("auto_cloud_sync", bool(self.switch_auto_cloud_sync.get()))
             self.config.set("reset_as_standalone_base_zip", bool(self.switch_reset_zip.get()))
             self.config.set("encryption_password", self.entry_password.get().strip())
             self.config.set("local_sync_folder_path", self.entry_sync_folder.get().strip())

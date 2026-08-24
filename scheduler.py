@@ -73,14 +73,20 @@ class PeriodicScheduler:
                             progress_callback=self.progress_callback
                         )
 
-                        if count > 0 and self.config.get("auto_cloud_sync", False) and self.sync_manager:
-                            if self.log_callback:
-                                self.log_callback("Auto-syncing newly processed backups to cloud...")
-                            try:
-                                self.sync_manager.sync_all_upload(output_dir, log_callback=self.log_callback)
-                            except Exception as sync_err:
+                        # Automatic Cloud Sync All after scheduled backup if sufficient credentials exist
+                        if self.config.get("auto_cloud_sync", True) and self.sync_manager:
+                            can_sync, sync_info = self.sync_manager.has_valid_credentials()
+                            if can_sync:
                                 if self.log_callback:
-                                    self.log_callback(f"Auto-sync error: {sync_err}")
+                                    self.log_callback(f"Starting automatic Cloud Sync All ({sync_info})...")
+                                try:
+                                    self.sync_manager.sync_all_upload(output_dir, log_callback=self.log_callback)
+                                except Exception as sync_err:
+                                    if self.log_callback:
+                                        self.log_callback(f"Auto cloud sync error: {sync_err}")
+                            else:
+                                if self.log_callback:
+                                    self.log_callback(f"Auto cloud sync skipped: {sync_info}")
 
                         self._is_processing_active = False
                         if self.on_run_end:

@@ -185,7 +185,6 @@ def cmd_config(args, config):
         for pair in args.set:
             if "=" in pair:
                 k, v = pair.split("=", 1)
-                # Parse integer values if applicable
                 if v.isdigit():
                     v = int(v)
                 config.set(k.strip(), v)
@@ -195,7 +194,16 @@ def cmd_config(args, config):
     return 0
 
 def main():
-    parser = argparse.ArgumentParser(description="HDiff Backup Pro - Command Line Interface (CLI)")
+    parser = argparse.ArgumentParser(
+        prog="main.py",
+        description="HDiff Backup Pro - SQL Server Differential Backup Tool (GUI & CLI)"
+    )
+
+    # Top-level application flags
+    parser.add_argument("--tray", "--minimized", "--start-in-tray", action="store_true", help="Launch application minimized to the system tray beside the clock")
+    parser.add_argument("--gui", action="store_true", help="Launch interactive graphical user interface (GUI)")
+    parser.add_argument("-v", "--version", action="version", version="HDiff Backup Pro v1.1.0 (HDiffPatch v5.1.3)")
+
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # Scan command
@@ -238,15 +246,22 @@ def main():
 
     args = parser.parse_args()
 
-    config = AppConfig()
-    hdiff_engine = HDiffEngine(config)
-    restore_engine = RestoreEngine(config)
-    sync_manager = SyncManager(config)
+    # If --tray or --gui is requested via cli
+    if args.tray or args.gui:
+        from ui.app import MainApplication
+        app = MainApplication(start_in_tray=args.tray)
+        app.mainloop()
+        return 0
 
     if not args.command:
         print_banner()
         parser.print_help()
         return 0
+
+    config = AppConfig()
+    hdiff_engine = HDiffEngine(config)
+    restore_engine = RestoreEngine(config)
+    sync_manager = SyncManager(config)
 
     if args.command == "scan":
         return cmd_scan(args, config, hdiff_engine)

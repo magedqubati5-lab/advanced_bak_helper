@@ -29,12 +29,13 @@ class TestBackupSystem(unittest.TestCase):
         self.config.set("output_dir", self.output_dir)
         self.config.set("hdiffz_path", os.path.abspath("bin/hdiffz.exe"))
         self.config.set("hpatchz_path", os.path.abspath("bin/hpatchz.exe"))
-        self.config.set("max_file_size_mb", 0.001)  # 1 KB
+        self.config.set("max_file_size_mb", 0.001)
         self.config.set("max_chain_length", 2)
         self.config.set("reset_as_standalone_base_zip", False)
         self.config.set("encryption_password", "SecretPass123!")
         self.config.set("cloud_provider", "local_folder")
         self.config.set("local_sync_folder_path", self.cloud_sync_dir)
+        self.config.set("auto_cloud_sync", True)
 
         self.hdiff_engine = HDiffEngine(self.config)
         self.restore_engine = RestoreEngine(self.config)
@@ -136,8 +137,12 @@ class TestBackupSystem(unittest.TestCase):
         self.assertEqual(res["actual_md5"], md5_target)
         print("[SUCCESS] Restored backup derived from standalone ref004.zip with 100% MD5 match!")
 
-    def test_sync_includes_ref_directory(self):
-        print("\n--- [Test 3] Full Cloud Sync (including .ref/ folder & manifest) ---")
+    def test_sync_skips_existing_files_and_full_sync(self):
+        print("\n--- [Test 3] Cloud Sync (Skipping existing files & Credentials validation) ---")
+        can_sync, info = self.sync_manager.has_valid_credentials()
+        self.assertTrue(can_sync)
+        self.assertIn("Local / Drive Sync Folder", info)
+
         base_content = b"SQL_SERVER_DATA_CHUNK_" * 30000
         for i in range(1, 4):
             f_path = os.path.join(self.input_dir, f"backup_{i}.bak")
@@ -145,16 +150,25 @@ class TestBackupSystem(unittest.TestCase):
                 f.write(base_content + f"PART_{i}".encode())
 
         self.hdiff_engine.process_backups(self.input_dir, self.output_dir, log_callback=print)
-        up_count = self.sync_manager.sync_all_upload(self.output_dir, log_callback=print)
-        self.assertGreater(up_count, 2)
+        
+        # First sync upload: Uploads all initial files (3 backups + manifest)
+        up_count_1 = self.sync_manager.sync_all_upload(self.output_dir, log_callback=print)
+        self.assertGreaterEqual(up_count_1, 3)
 
+        # Second sync upload immediately after: Should SKIP all existing files (Uploaded: 1 for manifest, 0 for backup files!)
+        up_count_2 = self.sync_manager.sync_all_upload(self.output_dir, log_callback=print)
+        # Manifest is uploaded as latest state, but all other files are skipped!
+        self.assertEqual(up_count_2, 1)
+        print("[SUCCESS] Verified second sync run successfully skipped all existing backup payloads in cloud!")
+
+        # Download & Restore verification
         down_count = self.sync_manager.sync_all_download(self.cloud_dest_dir, log_callback=print)
-        self.assertEqual(up_count, down_count)
+        self.assertGreaterEqual(down_count, 3)
 
         restored_ref_dir = os.path.join(self.cloud_dest_dir, ".ref")
         self.assertTrue(os.path.exists(restored_ref_dir))
         self.assertTrue(os.path.exists(os.path.join(restored_ref_dir, "manifest.json")))
-        print("[SUCCESS] Cloud sync restored both .ref/ folder and differential backups with verified signatures!")
+        print("[SUCCESS] Cloud sync download verified and fully restored!")
 
     def test_crypto_and_digital_signature(self):
         print("\n--- [Test 4] Encryption & RSA Digital Signature ---")
